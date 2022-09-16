@@ -53,3 +53,5 @@ package object tablefy:
       val width = items.map(_.length).max
       val hsep = text("-" * width)
       hsep || vcat(left, items.map(i => text(pad(width, i))).intersperse(hsep)) || hsep
+
+  protected def pad(width: Int, x: String): String = x.padTo(width - x.length, ' ')

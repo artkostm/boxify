@@ -20,12 +20,12 @@ protected[boxify] object Padable:
       else if n <= value.length then value.take(n)
       else value.padTo(n, filler)
 
-  given [A]: Padable[List[A]] with
+  given[A]: Padable[LazyList[A]] with
     override type Filler = A
-    override def reverse(a: List[A]): List[A]                      = a.reverse
-    override def splitAt(a: List[A], n: Int): (List[A], List[A])   = a.splitAt(n)
-    override def length(a: List[A]): Int                           = a.size
-    override def takeP(filler: A, n: Int, value: List[A]): List[A] =
-      if n <= 0 then List.empty
+    override def reverse(a: LazyList[A]): LazyList[A] = a.reverse
+    override def splitAt(a: LazyList[A], n: Int): (LazyList[A], LazyList[A]) = a.splitAt(n)
+    override def length(a: LazyList[A]): Int = a.size
+    override def takeP(filler: A, n: Int, value: LazyList[A]): LazyList[A] =
+      if n <= 0 then LazyList.empty
       else if n <= value.length then value.take(n)
       else value.padTo(n, filler)
