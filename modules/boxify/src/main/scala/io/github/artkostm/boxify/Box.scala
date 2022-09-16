@@ -6,7 +6,7 @@ import cats.effect.std.Console
 import cats.implicits.*
 
 import scala.annotation.targetName
-import scala.jdk.CollectionConverters.ListHasAsScala
+import scala.jdk.CollectionConverters.IteratorHasAsScala
 
 case class Box(rows: Int, cols: Int, content: Content)
 
@@ -16,22 +16,22 @@ object Box:
   extension (box: Box)
     // Paste two boxes together horizontally with a single intervening column of space, using a default (top) alignment.
     @targetName("plusHoriz")
-    infix def <+>(r: Box): Box = hcat(Alignment.top, List(box, empty(0)(1), r))
+    infix def <+>(r: Box): Box = hcat(Alignment.top, LazyList(box, empty(0)(1), r))
     // Paste two boxes together vertically, using a default (left) alignment.
     @targetName("plusVert")
-    infix def ||(b: Box): Box  = vcat(Alignment.left, List(box, b))
+    infix def ||(b: Box): Box  = vcat(Alignment.left, LazyList(box, b))
     // Paste two boxes together vertically with a single intervening row of space, using a default (left) alignment.
     @targetName("plusVertInt")
-    infix def /+/(b: Box): Box = vcat(Alignment.left, List(box, empty(1)(0), b))
+    infix def /+/(b: Box): Box = vcat(Alignment.left, LazyList(box, empty(1)(0), b))
 
   given Semigroup[Box] with
     override def combine(x: Box, y: Box): Box =
-      hcat(Alignment.top, List(x, y))
+      hcat(Alignment.top, LazyList(x, y))
 
   given Monoid[Box] with
     override def empty: Box = nil
     override def combine(x: Box, y: Box): Box =
-      hcat(Alignment.top, List(x, y))
+      hcat(Alignment.top, LazyList(x, y))
 
   given Show[Box] with
     override def show(t: Box): String = render(t)
@@ -56,25 +56,25 @@ object Box:
 
   // A box containing lines of text. May be empty.
   def text: String => Box =
-    s => vcat(Alignment.left, s.lines().toList.asScala.map(unsafeLine).toList)
+    s => vcat(Alignment.left, s.lines().iterator().asScala.map(unsafeLine).to(LazyList))
 
   // Glue a list of boxes together horizontally, with the given alignment.
   def hcat[F[_]: Foldable](a: Alignment, bs: F[Box]): Box =
     val (w, h) = sumMax[F, Box, Int, Int](_.cols, 0, _.rows, bs)
-    Box(h, w, Row(Foldable[F].toList(bs).map(b => Alignment.alignVert(a)(h)(b))))
+    Box(h, w, Row(LazyList.from(Foldable[F].toIterable(bs)).map(b => Alignment.alignVert(a)(h)(b))))
 
   // Glue a list of boxes together vertically, with the given alignment.
   def vcat[F[_]: Foldable](a: Alignment, bs: F[Box]): Box =
     val (h, w) = sumMax[F, Box, Int, Int](_.rows, 0, _.cols, bs)
-    Box(h, w, Col(Foldable[F].toList(bs).map(b => Alignment.alignHoriz(a)(w)(b))))
+    Box(h, w, Col(LazyList.from(Foldable[F].toIterable(bs)).map(b => Alignment.alignHoriz(a)(w)(b))))
 
   // It lays out the boxes @bs@ with a copy of @p@ interspersed between each.
   def punctuateV[F[_]: Foldable](a: Alignment, p: Box, bs: F[Box]): Box =
-    vcat[List](a, Foldable[F].toList(bs).intersperse(p))
+    vcat[LazyList](a, LazyList.from(Foldable[F].toIterable(bs)).intersperse(p))
 
   // It lays out the boxes @bs@ with a copy of @p@ interspersed between each.
   def punctuateH[F[_]: Foldable](a: Alignment, p: Box, bs: F[Box]): Box =
-    hcat[List](a, Foldable[F].toList(bs).intersperse(p))
+    hcat[LazyList](a, LazyList.from(Foldable[F].toIterable(bs)).intersperse(p))
 
   // It lays out @bs@ vertically with alignment @a@, with @sep@ amount of space in between each.
   def vsep[F[_]: Foldable]: Int => Alignment => F[Box] => Box =
@@ -85,7 +85,7 @@ object Box:
     sep => a => bs => punctuateH(a, empty(0)(sep), bs)
 
   // It makes a box of height @n@ with the text @s@ aligned according to @a@.
-  def mkParaBox: Alignment => Int => List[String] => Box =
+  def mkParaBox: Alignment => Int => LazyList[String] => Box =
     a => n => ls => Alignment.alignVert(Alignment.top)(n)(vcat(a, ls.map(text)))
 
   // Render a 'Box' as a String, suitable for writing to the screen or a file. Also, strips trailing whitespace.
@@ -97,17 +97,15 @@ object Box:
     renderBox(_).mkString("\n")
 
   // Render a box as a list of lines.
-  def renderBox: Box => List[String] =
-    case Box(r, c, Blank)             => resizeBox(r, c)(List(""))
-    case Box(r, c, Text(t))           => resizeBox(r, c)(List(t))
+  def renderBox: Box => LazyList[String] =
+    case Box(r, c, Blank)             => resizeBox(r, c)(LazyList(""))
+    case Box(r, c, Text(t))           => resizeBox(r, c)(LazyList(t))
     case Box(r, c, Row(bs))           =>
       resizeBox(r, c) {
         bs.map(box => renderBoxWithRows(r)(box))
-          .to(LazyList)
           .foldRight(LazyList.continually[String]("")) { case (items, l) =>
-            items.to(LazyList).lazyZip(l).map(_ + _)
+            items.lazyZip(l).map(_ + _)
           }
-          .toList
       }
     case Box(r, c, Col(bs))           => resizeBox(r, c)(bs.flatMap(box => renderBoxWithCols(c)(box)))
     case Box(r, c, SubBox(ha, va, b)) => resizeBoxAligned(r)(c)(ha)(va)(renderBox(b))
@@ -118,17 +116,17 @@ object Box:
   def unsafePrintBox: Box => Unit = b => println(render(b))
 
   // Render a box as a list of lines, using a given number of rows.
-  private def renderBoxWithRows: Int => Box => List[String] =
+  private def renderBoxWithRows: Int => Box => LazyList[String] =
     r => b => renderBox(b.copy(rows = r))
 
   // Render a box as a list of lines, using a given number of columns.
-  private def renderBoxWithCols: Int => Box => List[String] =
+  private def renderBoxWithCols: Int => Box => LazyList[String] =
     c => b => renderBox(b.copy(cols = c))
 
   private inline def blanks(n: Int): String = " " * n
 
   // Resize a rendered list of lines.
-  private def resizeBox(using PLS: Padable[List[String]], PS: Padable[String])(r: Int, c: Int): List[String] => List[String] =
+  private def resizeBox(using PLS: Padable[LazyList[String]], PS: Padable[String])(r: Int, c: Int): LazyList[String] => LazyList[String] =
     s => PLS.takeP(blanks(c).asInstanceOf[PLS.Filler], r, s.map(PS.takeP(' '.asInstanceOf[PS.Filler], c, _)))
 
   // It is like Padable' 'takeP', but with alignment.  That is, we imagine a copy of @xs@ extended infinitely on both sides with
@@ -159,9 +157,9 @@ object Box:
       glue.tupled(res)
 
   // Resize a rendered list of lines, using given alignments.
-  private def resizeBoxAligned: Int => Int => Alignment => Alignment => List[String] => List[String] =
+  private def resizeBoxAligned: Int => Int => Alignment => Alignment => LazyList[String] => LazyList[String] =
     r => c => ha => va => l =>
-      takePA[List[String]](va)(blanks(c))(r)(l.map(s => takePA[String](ha)(' ')(c)(s)))
+      takePA[LazyList[String]](va)(blanks(c))(r)(l.map(s => takePA[String](ha)(' ')(c)(s)))
 
   // Calculate a sum and a maximum over a list in one pass. If the list is
   // empty, the maximum is reported as the given default.
